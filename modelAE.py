@@ -13,8 +13,8 @@ from torch import optim
 from torch.autograd import Variable
 
 import mcubes
-from bspt import digest_bsp, get_mesh, get_mesh_watertight
-#from bspt_slow import digest_bsp, get_mesh, get_mesh_watertight
+# from bspt import digest_bsp, get_mesh, get_mesh_watertight
+from bspt_slow import digest_bsp, get_mesh, get_mesh_watertight
 
 from utils import *
 
@@ -206,7 +206,7 @@ class BSP_AE(object):
 		self.ef_dim = 32
 		self.p_dim = 4096
 		self.c_dim = 256
-
+		print(" # of iterations:", config.iteration)
 		self.dataset_name = config.dataset
 		self.dataset_load = self.dataset_name + '_train'
 		if not (config.train or config.getz):
@@ -223,6 +223,7 @@ class BSP_AE(object):
 			self.data_voxels = data_dict['voxels'][:]
 			#reshape to NCHW
 			self.data_voxels = np.reshape(self.data_voxels, [-1,1,self.input_size,self.input_size,self.input_size])
+			print("Loaded dataset: "+data_hdf5_name)
 		else:
 			print("error: cannot load "+data_hdf5_name)
 			exit(0)
@@ -258,6 +259,7 @@ class BSP_AE(object):
 		self.coords = np.concatenate([self.coords, np.ones([multiplier3,test_point_batch_size,1],np.float32) ],axis=2)
 		self.coords = torch.from_numpy(self.coords)
 
+		print("Cuda available?: " , torch.cuda.is_available())
 		if torch.cuda.is_available():
 			self.device = torch.device('cuda')
 			torch.backends.cudnn.benchmark = True
@@ -269,8 +271,8 @@ class BSP_AE(object):
 		self.bsp_network = bsp_network(self.phase, self.ef_dim, self.p_dim, self.c_dim)
 		self.bsp_network.to(self.device)
 		#print params
-		#for param_tensor in self.bsp_network.state_dict():
-		#	print(param_tensor, "\t", self.bsp_network.state_dict()[param_tensor].size())
+		for param_tensor in self.bsp_network.state_dict():
+			print(param_tensor, "\t", self.bsp_network.state_dict()[param_tensor].size())
 		self.optimizer = torch.optim.Adam(self.bsp_network.parameters(), lr=config.learning_rate, betas=(config.beta1, 0.999))
 		#pytorch does not have a checkpoint manager
 		#have to define it myself to manage max num of checkpoints to keep
@@ -288,7 +290,7 @@ class BSP_AE(object):
 			#point_value - ground truth inside-outside value for each point
 			#cw2 - connections T
 			#cw3 - auxiliary weights W
-			def network_loss(G2,G,point_value,cw2,cw3):
+			def network_loss(G2, G, point_value, cw2, cw3):
 				loss_sp = torch.mean((point_value - G)**2)
 				torch.clamp(cw2-1, min=0)
 				loss = loss_sp + torch.sum(torch.abs(cw3-1)) + (torch.sum(torch.clamp(cw2-1, min=0) - torch.clamp(cw2, max=0)))
@@ -329,6 +331,7 @@ class BSP_AE(object):
 	def train(self, config):
 		#load previous checkpoint
 		checkpoint_txt = os.path.join(self.checkpoint_path, "checkpoint")
+		print("checkpoint_txt = ", checkpoint_txt)
 		if os.path.exists(checkpoint_txt):
 			fin = open(checkpoint_txt)
 			model_dir = fin.readline().strip()
@@ -336,13 +339,14 @@ class BSP_AE(object):
 			self.bsp_network.load_state_dict(torch.load(model_dir))
 			print(" [*] Load SUCCESS")
 		else:
-			print(" [!] Load failed...")
+			print(" [!] Failed to load: " +checkpoint_txt)
 			
 		shape_num = len(self.data_voxels)
+		print("Data Voxel's shape: ", self.data_voxels.shape)
 		batch_index_list = np.arange(shape_num)
 		
-		print("\n\n----------net summary----------")
-		print("training samples   ", shape_num)
+		print("\n\n----------Net Summary----------")
+		print("Training Samples   ", shape_num)
 		print("-------------------------------\n\n")
 		
 		start_time = time.time()
@@ -350,6 +354,7 @@ class BSP_AE(object):
 		training_epoch = config.epoch + int(config.iteration/shape_num)
 		batch_num = int(shape_num/self.shape_batch_size)
 		point_batch_num = int(self.load_point_batch_size/self.point_batch_size)
+		print("Training Epoch: ", training_epoch)
 
 		self.bsp_network.train()
 		for epoch in range(0, training_epoch):
@@ -358,8 +363,10 @@ class BSP_AE(object):
 			avg_loss_tt = 0
 			avg_num = 0
 			for idx in range(batch_num):
+				print("idx:" , idx, ", out of num: ", batch_num, ", epoch: ", epoch, " out of :", training_epoch)
 				dxb = batch_index_list[idx*self.shape_batch_size:(idx+1)*self.shape_batch_size]
 				batch_voxels = self.data_voxels[dxb].astype(np.float32)
+
 				if point_batch_num==1:
 					point_coord = self.data_points[dxb]
 					point_value = self.data_values[dxb]
@@ -411,26 +418,26 @@ class BSP_AE(object):
 						fout.write(self.checkpoint_manager_list[pointer]+"\n")
 				fout.close()
 
-		if not os.path.exists(self.checkpoint_path):
-			os.makedirs(self.checkpoint_path)
-		save_dir = os.path.join(self.checkpoint_path,self.checkpoint_name+str(self.sample_vox_size)+"-"+str(self.phase)+"-"+str(epoch)+".pth")
-		self.checkpoint_manager_pointer = (self.checkpoint_manager_pointer+1)%self.max_to_keep
-		#delete checkpoint
-		if self.checkpoint_manager_list[self.checkpoint_manager_pointer] is not None:
-			if os.path.exists(self.checkpoint_manager_list[self.checkpoint_manager_pointer]):
-				os.remove(self.checkpoint_manager_list[self.checkpoint_manager_pointer])
-		#save checkpoint
-		torch.save(self.bsp_network.state_dict(), save_dir)
-		#update checkpoint manager
-		self.checkpoint_manager_list[self.checkpoint_manager_pointer] = save_dir
-		#write file
-		checkpoint_txt = os.path.join(self.checkpoint_path, "checkpoint")
-		fout = open(checkpoint_txt, 'w')
-		for i in range(self.max_to_keep):
-			pointer = (self.checkpoint_manager_pointer+self.max_to_keep-i)%self.max_to_keep
-			if self.checkpoint_manager_list[pointer] is not None:
-				fout.write(self.checkpoint_manager_list[pointer]+"\n")
-		fout.close()
+				if not os.path.exists(self.checkpoint_path):
+					os.makedirs(self.checkpoint_path)
+				save_dir = os.path.join(self.checkpoint_path,self.checkpoint_name+str(self.sample_vox_size)+"-"+str(self.phase)+"-"+str(epoch)+".pth")
+				self.checkpoint_manager_pointer = (self.checkpoint_manager_pointer+1)%self.max_to_keep
+				#delete checkpoint
+				if self.checkpoint_manager_list[self.checkpoint_manager_pointer] is not None:
+					if os.path.exists(self.checkpoint_manager_list[self.checkpoint_manager_pointer]):
+						os.remove(self.checkpoint_manager_list[self.checkpoint_manager_pointer])
+				#save checkpoint
+				torch.save(self.bsp_network.state_dict(), save_dir)
+				#update checkpoint manager
+				self.checkpoint_manager_list[self.checkpoint_manager_pointer] = save_dir
+				#write file
+				checkpoint_txt = os.path.join(self.checkpoint_path, "checkpoint")
+				fout = open(checkpoint_txt, 'w')
+				for i in range(self.max_to_keep):
+					pointer = (self.checkpoint_manager_pointer+self.max_to_keep-i)%self.max_to_keep
+					if self.checkpoint_manager_list[pointer] is not None:
+						fout.write(self.checkpoint_manager_list[pointer]+"\n")
+				fout.close()
 
 	def test_1(self, config, name):
 		multiplier = int(self.real_size/self.test_size)
@@ -468,11 +475,12 @@ class BSP_AE(object):
 	def test_bsp(self, config):
 		#load previous checkpoint
 		checkpoint_txt = os.path.join(self.checkpoint_path, "checkpoint")
+		print("Trying to check:" , checkpoint_txt)
 		if os.path.exists(checkpoint_txt):
 			fin = open(checkpoint_txt)
 			model_dir = fin.readline().strip()
 			fin.close()
-			self.bsp_network.load_state_dict(torch.load(model_dir))
+			self.bsp_network.load_state_dict(torch.load(model_dir, map_location=torch.device('cpu')))
 			print(" [*] Load SUCCESS")
 		else:
 			print(" [!] Load failed...")
@@ -523,7 +531,7 @@ class BSP_AE(object):
 							bsp_convex_list.append(np.array(box,np.float32))
 
 			#print(bsp_convex_list)
-			print(len(bsp_convex_list))
+			print(len(bsp_convex_list), "at t: ", t)
 			
 			#convert bspt to mesh
 			vertices, polygons = get_mesh(bsp_convex_list)
@@ -722,7 +730,7 @@ class BSP_AE(object):
 			fin = open(checkpoint_txt)
 			model_dir = fin.readline().strip()
 			fin.close()
-			self.bsp_network.load_state_dict(torch.load(model_dir))
+			self.bsp_network.load_state_dict(torch.load(model_dir, map_location=torch.device('cpu')))
 			print(" [*] Load SUCCESS")
 		else:
 			print(" [!] Load failed...")
@@ -745,20 +753,74 @@ class BSP_AE(object):
 					for k in range(multiplier):
 						minib = i*multiplier2+j*multiplier+k
 						point_coord = self.coords[minib:minib+1]
-						_,_,_, model_out = self.bsp_network(None, None, out_m, point_coord, is_training=False)
-						model_float[self.aux_x+i+1,self.aux_y+j+1,self.aux_z+k+1] = np.reshape(model_out.detach().cpu().numpy(), [self.test_size,self.test_size,self.test_size])
-			
-			vertices, triangles = mcubes.marching_cubes(model_float, 0.5)
-			vertices = (vertices-0.5)/self.real_size-0.5
-			#output prediction
-			write_ply_triangle(config.sample_dir+"/"+str(t)+"_vox.ply", vertices, triangles)
+						# _,_, model_out,_ = self.bsp_network(None, None, out_m, point_coord, is_training=False)
+						# model_float[self.aux_x+i+1,self.aux_y+j+1,self.aux_z+k+1] = np.reshape(model_out.detach().cpu().numpy(), [self.test_size,self.test_size,self.test_size])
+						_,_, model_out, _ = self.bsp_network(None, None, out_m, point_coord, is_training=False)
+						model_float[self.aux_x+i,self.aux_y+j,self.aux_z+k,:] = np.reshape(model_out.detach().cpu().numpy(), [self.test_size,self.test_size,self.test_size,self.c_dim])
 
-			vertices, triangles = mcubes.marching_cubes(batch_voxels_[0,0,:,:,:], 0.5)
-			vertices = (vertices-0.5)/self.real_size-0.5
-			#output ground truth
-			write_ply_triangle(config.sample_dir+"/"+str(t)+"_gt.ply", vertices, triangles)
 			
-			print("[sample]")
+			# vertices, triangles = mcubes.marching_cubes(model_float, 0.5)
+			# vertices = (vertices-0.5)/self.real_size-0.5
+			# #output prediction
+			# print(config.sample_dir+"/"+str(t)+"_vox.ply")
+			# write_ply_triangle(config.sample_dir+"/"+str(t)+"_vox.ply", vertices, triangles)
+
+			# print(config.sample_dir+"/"+str(t)+"_gt.ply")
+			# vertices, triangles = mcubes.marching_cubes(batch_voxels_[0,0,:,:,:], 0.5)
+			# vertices = (vertices-0.5)/self.real_size-0.5
+			# #output ground truth
+			# write_ply_triangle(config.sample_dir+"/"+str(t)+"_gt.ply", vertices, triangles)
+			
+			# print("[sample]", str(t))
+			out_m = out_m.detach().cpu().numpy()
+			
+			bsp_convex_list = []
+			color_idx_list = []
+			model_float = model_float<0.01
+			model_float_sum = np.sum(model_float,axis=3)
+			for i in range(self.c_dim):
+				slice_i = model_float[:,:,:,i]
+				if np.max(slice_i)>0: #if one voxel is inside a convex
+					if np.min(model_float_sum-slice_i*2)>=0: #if this convex is redundant, i.e. the convex is inside the shape
+						model_float_sum = model_float_sum-slice_i
+					else:
+						box = []
+						for j in range(self.p_dim):
+							if w2[j,i]>0.01:
+								a = -out_m[0,0,j]
+								b = -out_m[0,1,j]
+								c = -out_m[0,2,j]
+								d = -out_m[0,3,j]
+								box.append([a,b,c,d])
+						if len(box)>0:
+							bsp_convex_list.append(np.array(box,np.float32))
+							color_idx_list.append(i)
+
+			#print(bsp_convex_list)
+			print(len(bsp_convex_list))
+			
+			#convert bspt to mesh
+			vertices = []
+
+			#write obj
+			fout2 = open(config.sample_dir+"/"+str(t)+"_bsp.obj", 'w')
+			fout2.write("mtllib default.mtl\n")
+
+			for i in range(len(bsp_convex_list)):
+				vg, tg = get_mesh([bsp_convex_list[i]])
+				vbias=len(vertices)+1
+				vertices = vertices+vg
+
+				fout2.write("usemtl m"+str(color_idx_list[i]+1)+"\n")
+				for ii in range(len(vg)):
+					fout2.write("v "+str(vg[ii][0])+" "+str(vg[ii][1])+" "+str(vg[ii][2])+"\n")
+				for ii in range(len(tg)):
+					fout2.write("f")
+					for jj in range(len(tg[ii])):
+						fout2.write(" "+str(tg[ii][jj]+vbias))
+					fout2.write("\n")
+
+			fout2.close()			
 	
 	def get_z(self, config):
 		#load previous checkpoint

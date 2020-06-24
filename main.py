@@ -21,7 +21,7 @@ parser.add_argument("--iteration", action="store", dest="iteration", default=0, 
 parser.add_argument("--learning_rate", action="store", dest="learning_rate", default=0.0001, type=float, help="Learning rate for adam [0.0001]")
 parser.add_argument("--beta1", action="store", dest="beta1", default=0.5, type=float, help="Momentum term of adam [0.5]")
 parser.add_argument("--dataset", action="store", dest="dataset", default="all_vox256_img", help="The name of dataset")
-parser.add_argument("--checkpoint_dir", action="store", dest="checkpoint_dir", default="checkpoint", help="Directory name to save the checkpoints [checkpoint]")
+parser.add_argument("--checkpoint_dir", action="store", dest="checkpoint_dir", default="./checkpoint/", help="Directory name to save the checkpoints [checkpoint]")
 parser.add_argument("--data_dir", action="store", dest="data_dir", default="./data/all_vox256_img/", help="Root directory of dataset [data]")
 parser.add_argument("--sample_dir", action="store", dest="sample_dir", default="./samples/", help="Directory name to save the image samples [samples]")
 parser.add_argument("--sample_vox_size", action="store", dest="sample_vox_size", default=64, type=int, help="Voxel resolution for coarse-to-fine training [64]")
@@ -40,7 +40,7 @@ if not os.path.exists(FLAGS.sample_dir):
 
 if FLAGS.ae:
 	bsp_ae = BSP_AE(FLAGS)
-
+	print("starting in AE")
 	if FLAGS.train:
 		bsp_ae.train(FLAGS)
 	elif FLAGS.getz:
@@ -48,18 +48,19 @@ if FLAGS.ae:
 	else:
 		if FLAGS.phase==0:
 			bsp_ae.test_dae3(FLAGS)
+			# bsp_ae.test_bsp(FLAGS)			
 		else:
-			#bsp_ae.test_bsp(FLAGS)
+			bsp_ae.test_bsp(FLAGS)
 			bsp_ae.test_mesh_point(FLAGS)
-			#bsp_ae.test_mesh_obj_material(FLAGS)
+			bsp_ae.test_mesh_obj_material(FLAGS)
 elif FLAGS.svr:
 	bsp_svr = BSP_SVR(FLAGS)
 
 	if FLAGS.train:
 		bsp_svr.train(FLAGS)
 	else:
-		#bsp_svr.test_bsp(FLAGS)
-		bsp_svr.test_mesh_point(FLAGS)
+		bsp_svr.test_bsp(FLAGS)
+		# bsp_svr.test_mesh_point(FLAGS)
 		#bsp_svr.test_mesh_obj_material(FLAGS)
 else:
 	print("Please specify an operation: ae or svr?")
