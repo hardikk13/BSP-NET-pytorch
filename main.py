@@ -50,9 +50,10 @@ if FLAGS.ae:
 			bsp_ae.test_dae3(FLAGS)
 			# bsp_ae.test_bsp(FLAGS)			
 		else:
-			bsp_ae.test_bsp(FLAGS)
+			# bsp_ae.test_dae3(FLAGS)
+			# bsp_ae.test_bsp(FLAGS)
 			bsp_ae.test_mesh_point(FLAGS)
-			bsp_ae.test_mesh_obj_material(FLAGS)
+			# bsp_ae.test_mesh_obj_material(FLAGS)
 elif FLAGS.svr:
 	bsp_svr = BSP_SVR(FLAGS)
 

@@ -199,7 +199,7 @@ class BSP_AE(object):
 			self.load_point_batch_size = 16*16*16
 		elif self.sample_vox_size==64:
 			self.load_point_batch_size = 16*16*16*4
-		self.shape_batch_size = 24
+		self.shape_batch_size = 28
 		self.point_batch_size = 16*16*16
 		self.input_size = 64 #input voxel grid size
 
@@ -335,12 +335,17 @@ class BSP_AE(object):
 		if os.path.exists(checkpoint_txt):
 			fin = open(checkpoint_txt)
 			model_dir = fin.readline().strip()
-			fin.close()
+			print("Model dir:" , model_dir)
+			fin.close()			
 			self.bsp_network.load_state_dict(torch.load(model_dir))
+			print(self.bsp_network.state_dict())
 			print(" [*] Load SUCCESS")
 		else:
 			print(" [!] Failed to load: " +checkpoint_txt)
 			
+		for param_tensor in self.bsp_network.state_dict():
+			print(param_tensor, "\t", self.bsp_network.state_dict()[param_tensor].size())
+
 		shape_num = len(self.data_voxels)
 		print("Data Voxel's shape: ", self.data_voxels.shape)
 		batch_index_list = np.arange(shape_num)
@@ -363,7 +368,7 @@ class BSP_AE(object):
 			avg_loss_tt = 0
 			avg_num = 0
 			for idx in range(batch_num):
-				print("idx:" , idx, ", out of num: ", batch_num, ", epoch: ", epoch, " out of :", training_epoch)
+				# print("idx:" , idx, ", out of num: ", batch_num, ", epoch: ", epoch, " out of :", training_epoch)
 				dxb = batch_index_list[idx*self.shape_batch_size:(idx+1)*self.shape_batch_size]
 				batch_voxels = self.data_voxels[dxb].astype(np.float32)
 
@@ -394,9 +399,10 @@ class BSP_AE(object):
 				avg_loss_tt += errTT.item()
 				avg_num += 1
 			print(str(self.sample_vox_size)+" Epoch: [%2d/%2d] time: %4.4f, loss_sp: %.6f, loss_total: %.6f" % (epoch, training_epoch, time.time() - start_time, avg_loss_sp/avg_num, avg_loss_tt/avg_num))
-			if epoch%10==9:
+			if epoch % 10 == 1:
+				print("running test_1")
 				self.test_1(config,"train_"+str(self.sample_vox_size)+"_"+str(epoch))
-			if epoch%20==19:
+			if epoch % 10 == 1:
 				if not os.path.exists(self.checkpoint_path):
 					os.makedirs(self.checkpoint_path)
 				save_dir = os.path.join(self.checkpoint_path,self.checkpoint_name+str(self.sample_vox_size)+"-"+str(self.phase)+"-"+str(epoch)+".pth")
@@ -450,10 +456,16 @@ class BSP_AE(object):
 		
 		t = np.random.randint(len(self.data_voxels))
 		model_float = np.zeros([self.real_size+2,self.real_size+2,self.real_size+2],np.float32)
-		batch_voxels = self.data_voxels[t:t+1].astype(np.float32)
-		batch_voxels = torch.from_numpy(batch_voxels)
+		batch_voxels_ = self.data_voxels[t:t+1].astype(np.float32) 
+		batch_voxels = torch.from_numpy(batch_voxels_)
 		batch_voxels = batch_voxels.to(self.device)
 		_, out_m, _,_ = self.bsp_network(batch_voxels, None, None, None, is_training=False)
+
+		vertices, triangles = mcubes.marching_cubes(batch_voxels_[0,0,:,:,:], 0.5)
+		vertices = (vertices-0.5)/self.real_size-0.5
+		#output ground truth
+		write_ply_triangle(config.sample_dir+"/"+name+"_gt.ply", vertices, triangles)
+
 		for i in range(multiplier):
 			for j in range(multiplier):
 				for k in range(multiplier):
@@ -480,7 +492,7 @@ class BSP_AE(object):
 			fin = open(checkpoint_txt)
 			model_dir = fin.readline().strip()
 			fin.close()
-			self.bsp_network.load_state_dict(torch.load(model_dir, map_location=torch.device('cpu')))
+			self.bsp_network.load_state_dict(torch.load(model_dir))
 			print(" [*] Load SUCCESS")
 		else:
 			print(" [!] Load failed...")
@@ -494,6 +506,7 @@ class BSP_AE(object):
 		multiplier2 = multiplier*multiplier
 
 		self.bsp_network.eval()
+		print("Choosing from data_voxells:", len(self.data_voxels))
 		for t in range(config.start, min(len(self.data_voxels),config.end)):
 			model_float = np.ones([self.real_size,self.real_size,self.real_size,self.c_dim],np.float32)
 			batch_voxels = self.data_voxels[t:t+1].astype(np.float32)
@@ -722,7 +735,7 @@ class BSP_AE(object):
 			fout2.close()
 
 
-	#output h3
+#output h3
 	def test_dae3(self, config):
 		#load previous checkpoint
 		checkpoint_txt = os.path.join(self.checkpoint_path, "checkpoint")
@@ -740,7 +753,7 @@ class BSP_AE(object):
 		dim = self.real_size
 		multiplier = int(dim/dima)
 		multiplier2 = multiplier*multiplier
-		
+		print("# of examples: ", len(self.data_voxels))
 		self.bsp_network.eval()
 		for t in range(config.start, min(len(self.data_voxels),config.end)):
 			model_float = np.zeros([self.real_size+2,self.real_size+2,self.real_size+2],np.float32)
@@ -753,74 +766,20 @@ class BSP_AE(object):
 					for k in range(multiplier):
 						minib = i*multiplier2+j*multiplier+k
 						point_coord = self.coords[minib:minib+1]
-						# _,_, model_out,_ = self.bsp_network(None, None, out_m, point_coord, is_training=False)
-						# model_float[self.aux_x+i+1,self.aux_y+j+1,self.aux_z+k+1] = np.reshape(model_out.detach().cpu().numpy(), [self.test_size,self.test_size,self.test_size])
-						_,_, model_out, _ = self.bsp_network(None, None, out_m, point_coord, is_training=False)
-						model_float[self.aux_x+i,self.aux_y+j,self.aux_z+k,:] = np.reshape(model_out.detach().cpu().numpy(), [self.test_size,self.test_size,self.test_size,self.c_dim])
-
+						_,_,_, model_out = self.bsp_network(None, None, out_m, point_coord, is_training=False)
+						model_float[self.aux_x+i+1,self.aux_y+j+1,self.aux_z+k+1] = np.reshape(model_out.detach().cpu().numpy(), [self.test_size,self.test_size,self.test_size])
 			
-			# vertices, triangles = mcubes.marching_cubes(model_float, 0.5)
-			# vertices = (vertices-0.5)/self.real_size-0.5
-			# #output prediction
-			# print(config.sample_dir+"/"+str(t)+"_vox.ply")
-			# write_ply_triangle(config.sample_dir+"/"+str(t)+"_vox.ply", vertices, triangles)
+			vertices, triangles = mcubes.marching_cubes(model_float, 0.5)
+			vertices = (vertices-0.5)/self.real_size-0.5
+			#output prediction
+			write_ply_triangle(config.sample_dir+"/"+str(t)+"_vox.ply", vertices, triangles)
 
-			# print(config.sample_dir+"/"+str(t)+"_gt.ply")
-			# vertices, triangles = mcubes.marching_cubes(batch_voxels_[0,0,:,:,:], 0.5)
-			# vertices = (vertices-0.5)/self.real_size-0.5
-			# #output ground truth
-			# write_ply_triangle(config.sample_dir+"/"+str(t)+"_gt.ply", vertices, triangles)
+			vertices, triangles = mcubes.marching_cubes(batch_voxels_[0,0,:,:,:], 0.5)
+			vertices = (vertices-0.5)/self.real_size-0.5
+			#output ground truth
+			write_ply_triangle(config.sample_dir+"/"+str(t)+"_gt.ply", vertices, triangles)
 			
-			# print("[sample]", str(t))
-			out_m = out_m.detach().cpu().numpy()
-			
-			bsp_convex_list = []
-			color_idx_list = []
-			model_float = model_float<0.01
-			model_float_sum = np.sum(model_float,axis=3)
-			for i in range(self.c_dim):
-				slice_i = model_float[:,:,:,i]
-				if np.max(slice_i)>0: #if one voxel is inside a convex
-					if np.min(model_float_sum-slice_i*2)>=0: #if this convex is redundant, i.e. the convex is inside the shape
-						model_float_sum = model_float_sum-slice_i
-					else:
-						box = []
-						for j in range(self.p_dim):
-							if w2[j,i]>0.01:
-								a = -out_m[0,0,j]
-								b = -out_m[0,1,j]
-								c = -out_m[0,2,j]
-								d = -out_m[0,3,j]
-								box.append([a,b,c,d])
-						if len(box)>0:
-							bsp_convex_list.append(np.array(box,np.float32))
-							color_idx_list.append(i)
-
-			#print(bsp_convex_list)
-			print(len(bsp_convex_list))
-			
-			#convert bspt to mesh
-			vertices = []
-
-			#write obj
-			fout2 = open(config.sample_dir+"/"+str(t)+"_bsp.obj", 'w')
-			fout2.write("mtllib default.mtl\n")
-
-			for i in range(len(bsp_convex_list)):
-				vg, tg = get_mesh([bsp_convex_list[i]])
-				vbias=len(vertices)+1
-				vertices = vertices+vg
-
-				fout2.write("usemtl m"+str(color_idx_list[i]+1)+"\n")
-				for ii in range(len(vg)):
-					fout2.write("v "+str(vg[ii][0])+" "+str(vg[ii][1])+" "+str(vg[ii][2])+"\n")
-				for ii in range(len(tg)):
-					fout2.write("f")
-					for jj in range(len(tg[ii])):
-						fout2.write(" "+str(tg[ii][jj]+vbias))
-					fout2.write("\n")
-
-			fout2.close()			
+			print("[sample]")
 	
 	def get_z(self, config):
 		#load previous checkpoint
@@ -839,7 +798,7 @@ class BSP_AE(object):
 		shape_num = len(self.data_voxels)
 		hdf5_file = h5py.File(hdf5_path, mode='w')
 		hdf5_file.create_dataset("zs", [shape_num,self.ef_dim*8], np.float32)
-
+	
 		self.bsp_network.eval()
 		print(shape_num)
 		for t in range(shape_num):
