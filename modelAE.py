@@ -199,13 +199,14 @@ class BSP_AE(object):
 			self.load_point_batch_size = 16*16*16
 		elif self.sample_vox_size==64:
 			self.load_point_batch_size = 16*16*16*4
-		self.shape_batch_size = 28
+		self.shape_batch_size = 24
 		self.point_batch_size = 16*16*16
 		self.input_size = 64 #input voxel grid size
 
 		self.ef_dim = 32
 		self.p_dim = 4096
 		self.c_dim = 256
+
 		print(" # of iterations:", config.iteration)
 		self.dataset_name = config.dataset
 		self.dataset_load = self.dataset_name + '_train'
@@ -547,9 +548,9 @@ class BSP_AE(object):
 			print(len(bsp_convex_list), "at t: ", t)
 			
 			#convert bspt to mesh
-			vertices, polygons = get_mesh(bsp_convex_list)
+			# vertices, polygons = get_mesh(bsp_convex_list)
 			#use the following alternative to merge nearby vertices to get watertight meshes
-			#vertices, polygons = get_mesh_watertight(bsp_convex_list)
+			vertices, polygons = get_mesh_watertight(bsp_convex_list)
 
 			#output ply
 			write_ply_polygon(config.sample_dir+"/"+str(t)+"_bsp.ply", vertices, polygons)
@@ -615,9 +616,9 @@ class BSP_AE(object):
 							bsp_convex_list.append(np.array(box,np.float32))
 							
 			#convert bspt to mesh
-			vertices, polygons = get_mesh(bsp_convex_list)
+			# vertices, polygons = get_mesh(bsp_convex_list)
 			#use the following alternative to merge nearby vertices to get watertight meshes
-			#vertices, polygons = get_mesh_watertight(bsp_convex_list)
+			vertices, polygons = get_mesh_watertight(bsp_convex_list)
 
 			#output ply
 			write_ply_polygon(config.sample_dir+"/"+str(t)+"_bsp.ply", vertices, polygons)
@@ -645,6 +646,7 @@ class BSP_AE(object):
 			fin = open(checkpoint_txt)
 			model_dir = fin.readline().strip()
 			fin.close()
+			print("Model dir: ", model_dir)
 			self.bsp_network.load_state_dict(torch.load(model_dir))
 			print(" [*] Load SUCCESS")
 		else:
@@ -734,7 +736,6 @@ class BSP_AE(object):
 
 			fout2.close()
 
-
 #output h3
 	def test_dae3(self, config):
 		#load previous checkpoint
@@ -769,6 +770,7 @@ class BSP_AE(object):
 						_,_,_, model_out = self.bsp_network(None, None, out_m, point_coord, is_training=False)
 						model_float[self.aux_x+i+1,self.aux_y+j+1,self.aux_z+k+1] = np.reshape(model_out.detach().cpu().numpy(), [self.test_size,self.test_size,self.test_size])
 			
+			model_float = model_float * -1.
 			vertices, triangles = mcubes.marching_cubes(model_float, 0.5)
 			vertices = (vertices-0.5)/self.real_size-0.5
 			#output prediction
